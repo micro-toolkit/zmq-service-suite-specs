@@ -28,37 +28,134 @@
 
     <div class="container">
       <section id="main_content">
-        <h3>
-<a name="welcome-to-github-pages" class="anchor" href="#welcome-to-github-pages"><span class="octicon octicon-link"></span></a>Welcome to GitHub Pages.</h3>
+        <h1>
+<a name="zmq-service-oriented-suite" class="anchor" href="#zmq-service-oriented-suite"><span class="octicon octicon-link"></span></a>ZMQ Service Oriented Suite</h1>
 
-<p>This automatic page generator is the easiest way to create beautiful pages for all of your projects. Author your page content here using GitHub Flavored Markdown, select a template crafted by a designer, and publish. After your page is generated, you can check out the new branch:</p>
+<p>This project aims to build a set of libraries and useful components to build decoupled and reliable service oriented architectures using Zero MQ. The implementation is inspired by Paranoid Pirate Pattern and Majordomo Patterns and also some of the descriptions are transcript from ZeroMQ guide.</p>
 
-<pre><code>$ cd your_repo_root/repo_name
-$ git fetch origin
-$ git checkout gh-pages
+<p><strong>The protocol goals of are:</strong></p>
+
+<ul>
+<li>Allow requests to be routed to workers on the basis of abstract service names;</li>
+<li>Allow both peers to detect disconnection of the other peer, through the use of heartbeating;</li>
+<li>Allow the broker to implement several patterns for task distribution to workers for a given service, such as round-robin, last recently used, etc..;</li>
+<li>Allow the broker to recover from dead or disconnected workers;</li>
+<li>Allow add/remove more workers when needed.</li>
+</ul><p><strong>The overall solution goals are:</strong></p>
+
+<ul>
+<li>Allow scale out, adding more nodes and clusters into the architecture would be painless;</li>
+<li>Minimize single point of failure, adding more than one broker with load balancing;</li>
+</ul><p>Using a brokerless architecture removes the single point of failures but also adds extra complexity.
+So this is an hybrid approach that will avoid unnecessary complexity.
+This <a href="http://zeromq.org/whitepapers:brokerless">article</a> contains some useful information about brokerless architectures with pros/const and usefull patterns such as directory service and dynamic discovering.</p>
+
+<p><strong>The overall topology contains:</strong></p>
+
+<ul>
+<li>Broker</li>
+<li>Service</li>
+<li>Client</li>
+</ul><p><img src="https://cloud.githubusercontent.com/assets/477458/3318005/f21ff090-f712-11e3-85ae-44423e0be998.png" alt="diagram"></p>
+
+<p>The protocol connects a set of client applications, a single/set of broker device/s and a pool of worker applications. Clients and workers connect to broker and both come and go arbitrarily. The broker open two sockets, one front-end for clients and one back-end for workers.
+We define 'client' applications as those issuing requests, and 'worker' applications as those processing them.</p>
+
+<p>The protocol makes these assumptions:</p>
+
+<ul>
+<li>Workers are idempotent, i.e. it is safe to execute the same request more than once.</li>
+<li>Workers will handle at most one request a time, and will issue exactly one reply for each successful request.</li>
+<li>The handles a set of shared request queues, one per service. Each queue has multiple writers (clients) and multiple readers (workers). The broker SHOULD serve clients on a fair basis and MAY deliver requests to workers on any basis, including round robin and least-recently used;</li>
+<li>The worker socket will connect to single broker.</li>
+</ul><h2>
+<a name="protocol-message" class="anchor" href="#protocol-message"><span class="octicon octicon-link"></span></a>Protocol Message</h2>
+
+<p>The protocol message format is the same for all workflows.</p>
+
+<ul>
+<li>Frame 0: Client/Worker identity in according to RFC4122 v1 (timestamp-based) UUID, this used for reply routing, for more information check 0MQ router routing info;</li>
+<li>Frame 1: Indentify the protocol version;</li>
+<li>Frame 2: Message type, the message type can be REQ or REP;</li>
+<li>Frame 3: Request unique identifier in according to RFC4122 v1 (timestamp-based) UUID;</li>
+<li>Frame 4: Service address information for routing composed by service identifier and verb to execute;</li>
+<li>Frame 5: Header, this key value dictionary encoded in message pack. It could be used for other information such as: server response times, tokens;</li>
+<li>Frame 6: Status, this is the response status codes;</li>
+<li>Frame 7: Payload, this where the actual data is going, this is encode in message pack.</li>
+</ul><p>The current broker, client, workers implementation will use http status codes for responses. The errors information will be on payload with correct status code filled in.
+The service name and verb are not case sensitive.</p>
+
+<p>Future extension points:</p>
+
+<ul>
+<li>Add message type partial to execute request and responses with more than a single message. This will be usefull to execute use cases such as streaming and upload of large amounts of information.</li>
+<li>The Address information should be improved with service version, to target specific versions. The wildcard '*' should select the must recent version.</li>
+<li>reject potential duplicated requests to handle potential non-idempontent executions;</li>
+<li>implement titanic pattern for disconnected reliability, with service execution and response persistence.</li>
+</ul><h2>
+<a name="broker" class="anchor" href="#broker"><span class="octicon octicon-link"></span></a>Broker</h2>
+
+<p>The broker will act only as addressing system receiving and routing request by service name. It implements an internal service managent interface service (SMI) that is reponsible for service instance management, adding and removing services from the cluster.
+The broker MUST use a ROUTER socket to accept requests from clients, and workers. The broker MAY use a separate socket for each of them or a separated one for each.</p>
+
+<h2>
+<a name="client" class="anchor" href="#client"><span class="octicon octicon-link"></span></a>Client</h2>
+
+<p>The client workflow is fairly simple, it will send message one or more request messages to broker and wait for replies.</p>
+
+<p>In the next dialog the 'C' represents the client and 'B' represents the Broker.</p>
+
+<p>Single request reply</p>
+
+<pre><code>Repeat
+  C: Request
+  B: Reply
 </code></pre>
 
-<p>If you're using the GitHub for Mac, simply sync your repository and you'll see the new branch.</p>
+<p>Multiple requests/replies</p>
 
-<h3>
-<a name="designer-templates" class="anchor" href="#designer-templates"><span class="octicon octicon-link"></span></a>Designer Templates</h3>
+<pre><code>Repeat
+  C: Request
+  C: Request
+  B: Reply
+  B: Reply
+</code></pre>
 
-<p>We've crafted some handsome templates for you to use. Go ahead and continue to layouts to browse through them. You can easily go back to edit your page before publishing. After publishing your page, you can revisit the page generator and switch to another theme. Your Page content will be preserved if it remained markdown format.</p>
+<h2>
+<a name="worker" class="anchor" href="#worker"><span class="octicon octicon-link"></span></a>Worker</h2>
 
-<h3>
-<a name="rather-drive-stick" class="anchor" href="#rather-drive-stick"><span class="octicon octicon-link"></span></a>Rather Drive Stick?</h3>
+<p>The worker workflows are a mix of a synchronous request-reply dialogs, initiated by the service worker, and an asynchronous heartbeat dialog that operates independently in both directions. This is the synchronous dialog where 'S' represents the worker and 'B' the broker.</p>
 
-<p>If you prefer to not use the automatic generator, push a branch named <code>gh-pages</code> to your repository to create a page manually. In addition to supporting regular HTML content, GitHub Pages support Jekyll, a simple, blog aware static site generator written by our own Tom Preston-Werner. Jekyll makes it easy to create site-wide headers and footers without having to copy them across every page. It also offers intelligent blog support and other advanced templating features.</p>
+<p>The service execute registration accepting requests:</p>
 
-<h3>
-<a name="authors-and-contributors" class="anchor" href="#authors-and-contributors"><span class="octicon octicon-link"></span></a>Authors and Contributors</h3>
+<pre><code>Once
+  S: Request to Service Management Interface (SMI) with verb UP
+  B: Forward to SMI
+  SMI: Reply with status 200
+</code></pre>
 
-<p>You can <a href="https://github.com/blog/821" class="user-mention">@mention</a> a GitHub username to generate a link to their profile. The resulting <code>&lt;a&gt;</code> element will link to the contributor's GitHub Profile. For example: In 2007, Chris Wanstrath (<a href="https://github.com/defunkt" class="user-mention">@defunkt</a>), PJ Hyett (<a href="https://github.com/pjhyett" class="user-mention">@pjhyett</a>), and Tom Preston-Werner (<a href="https://github.com/mojombo" class="user-mention">@mojombo</a>) founded GitHub.</p>
+<p>Handles requests:</p>
 
-<h3>
-<a name="support-or-contact" class="anchor" href="#support-or-contact"><span class="octicon octicon-link"></span></a>Support or Contact</h3>
+<pre><code>Repeat
+  B: Request
+  S: Reply
+</code></pre>
 
-<p>Having trouble with Pages? Check out the documentation at <a href="http://help.github.com/pages">http://help.github.com/pages</a> or contact <a href="mailto:support@github.com">support@github.com</a> and we’ll help you sort it out.</p>
+<p>Disconnect worker:</p>
+
+<pre><code>Once
+  S: Request to SMI with verb DOWN
+  B: Forward to SMI
+  SMI: Reply with status 200
+</code></pre>
+
+<p>The asynchronous heartbeat dialog operates on the same sockets and works thus:</p>
+
+<pre><code>Repeat (every second):
+  S: Request to SMI with verb HEARTBEAT
+  B: Forward to SMI
+  SMI: Reply with status 200
+</code></pre>
       </section>
     </div>
 
